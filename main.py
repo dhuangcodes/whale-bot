@@ -7,7 +7,7 @@ from alerts import Alerter
 from config import MIN_TRADE_USD, POLL_INTERVAL, TOP_WALLETS_COUNT
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.FileHandler("whale.log"),
