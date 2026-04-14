@@ -32,9 +32,27 @@ class Alerter:
         side   = trade["outcome"]
         wallet = trade["wallet"]
         pnl    = trade["pnl"]
-        wr     = trade["win_rate"]
-        nt     = trade["n_trades"]
         side_e = "🟢" if "YES" in side.upper() else "🔴"
+
+        # Volume context line
+        vol = trade.get("volume_24h", 0)
+        vol_str = f"${vol:,.0f} 24h vol" if vol > 0 else "volume unknown"
+
+        # Price movement line
+        pa = trade.get("price_after", 0)
+        pc = trade["price_cents"]
+        if pa > 0 and pc > 0:
+            if "YES" in side.upper():
+                diff = pa - pc
+            else:
+                diff = pc - pa
+            move_str = f"{'▲' if diff > 0 else '▼'} {abs(diff):.1f}¢ after trade"
+        else:
+            move_str = "price data unavailable"
+
+        # Consensus line
+        sw = trade.get("same_side_whales", 0)
+        cons_str = f"{sw + 1} whale{'s' if sw > 0 else ''} on this side" if sw > 0 else "first whale on this side"
 
         embed = {
             "title": f"{s.emoji} {s.label} — Polymarket Whale",
@@ -50,18 +68,22 @@ class Alerter:
                  "value": f"**${usd:,.0f}**",
                  "inline": True},
                 {"name": "👛 Wallet",
-                 "value": (f"`{_short(wallet)}`\n"
-                           f"All-time PnL: **{_pnl(pnl)}**\n"
-                           f"Win Rate: **{wr*100:.1f}%** ({nt} trades)"),
+                 "value": f"`{_short(wallet)}`  |  All-time PnL: **{_pnl(pnl)}**",
                  "inline": False},
                 {"name": "📊 Confidence Score",
                  "value": f"`{_bar(s.total)}` **{s.total}/100**\n{s.reason}",
                  "inline": False},
                 {"name": "🔬 Breakdown",
-                 "value": (f"Credibility: `{s.credibility}/35` • "
-                           f"Size: `{s.size}/25` • "
-                           f"Conviction: `{s.conviction}/20` • "
-                           f"Win Rate: `{s.winrate}/20`"),
+                 "value": (
+                     f"Credibility: `{s.credibility}/30` • "
+                     f"Vol Share: `{s.dominance}/25` • "
+                     f"Conviction: `{s.conviction}/20` • "
+                     f"Mkt Move: `{s.price_move}/15` • "
+                     f"Consensus: `{s.consensus}/10`"
+                 ),
+                 "inline": False},
+                {"name": "📈 Context",
+                 "value": f"{vol_str}  |  {move_str}  |  {cons_str}",
                  "inline": False},
                 {"name": "🔗 Links",
                  "value": (f"[Market]({trade['market_url']}) • "
@@ -86,7 +108,7 @@ class Alerter:
         print(f"Market : {trade['market_title']}")
         print(f"Side   : {trade['outcome']} @ {trade['price_cents']:.1f}¢")
         print(f"Size   : ${trade['usd']:,.0f}")
-        print(f"Wallet : {_short(trade['wallet'])} | {_pnl(trade['pnl'])} | {trade['win_rate']*100:.1f}% WR")
+        print(f"Wallet : {_short(trade['wallet'])} | {_pnl(trade['pnl'])}")
         print(f"Reason : {s.reason}")
         print(f"Link   : {trade['market_url']}")
         print(f"{'='*60}\n")
