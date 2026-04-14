@@ -49,7 +49,7 @@ def get_leaderboard(limit: int = 300) -> list[dict]:
     Response shape: {"leaderboard": [...]}
     Each entry has: proxyWallet, pnl, vol, name
     """
-    data = _get(f"{DATA}/leaderboard", {"limit": limit})
+    data = _get(f"{GAMMA}/leaderboard", {"limit": limit})
     
     if data is None:
         log.error("Leaderboard returned None")
