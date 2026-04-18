@@ -66,6 +66,14 @@ def run():
     log.info(f"Threshold: ${MIN_TRADE_USD:,.0f} | Top {TOP_WALLETS_COUNT} wallets")
 
     alerter       = Alerter()
+
+    # Startup test — verify bot token and thread creation work
+    import os
+    bot_auth = os.getenv("DISCORD_BOT_AUTH", "")
+    log.info(f"DISCORD_BOT_AUTH set: {bool(bot_auth)} length={len(bot_auth)}")
+    channel_id = alerter._get_channel_id()
+    log.info(f"Channel ID: {channel_id}")
+
     seen          = set()
     profile_cache = {}
     market_cache  = {}
