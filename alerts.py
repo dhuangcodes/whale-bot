@@ -1,7 +1,7 @@
 import re
 import logging
 import requests
-from config import DISCORD_WEBHOOK_URL, BOT_TOKEN
+from config import DISCORD_WEBHOOK_URL, DISCORD_BOT_AUTH as BOT_TOKEN
 from scorer import Score
 
 log = logging.getLogger(__name__)
