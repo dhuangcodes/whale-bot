@@ -1,6 +1,7 @@
 import re
 import logging
 import requests
+from datetime import datetime, timezone, timedelta
 from config import DISCORD_WEBHOOK_URL, DISCORD_BOT_AUTH as BOT_TOKEN
 from scorer import Score
 
@@ -23,33 +24,40 @@ def _short(addr: str) -> str:
     return f"{addr[:6]}...{addr[-4:]}" if len(addr) > 10 else addr
 
 def _market_key(title: str) -> str:
-    """Strip O/U lines and suffixes so related markets group into same thread."""
     return re.split(r'[:\|]', title)[0].strip() or title
 
 
+
+def _format_est(ts: int) -> str:
+    if not ts:
+        return "unknown"
+    est = timezone(timedelta(hours=-5))
+    dt = datetime.fromtimestamp(ts, tz=est)
+    return dt.strftime("%b %d %I:%M %p EST")
+
 class Alerter:
     def __init__(self):
-        self.active_threads: dict[str, str] = {}  # market_key -> thread_id
+        self.active_threads: dict[str, str] = {}
         self._channel_id: str | None = None
 
     def _get_channel_id(self) -> str | None:
-        """Fetch channel ID from webhook URL once and cache it."""
         if self._channel_id:
             return self._channel_id
         try:
             r = requests.get(DISCORD_WEBHOOK_URL, timeout=5)
             r.raise_for_status()
-            self._channel_id = str(r.json().get("channel_id", ""))
+            data = r.json()
+            self._channel_id = str(data.get("channel_id", ""))
+            log.info(f"Got channel_id: {self._channel_id}")
             return self._channel_id
         except Exception as e:
-            log.warning(f"Could not fetch channel ID: {e}")
+            log.error(f"Could not fetch channel ID: {e}")
             return None
 
     def _bot_headers(self) -> dict:
         return {"Authorization": f"Bot {BOT_TOKEN}", "Content-Type": "application/json"}
 
     def _post_to_channel(self, embed: dict) -> str | None:
-        """Post to main channel via webhook, return message ID."""
         try:
             r = requests.post(
                 DISCORD_WEBHOOK_URL,
@@ -58,36 +66,44 @@ class Alerter:
                 timeout=5
             )
             r.raise_for_status()
-            return str(r.json().get("id", ""))
+            msg_id = str(r.json().get("id", ""))
+            log.info(f"Posted to channel, msg_id={msg_id}")
+            return msg_id
         except Exception as e:
             log.error(f"Failed to post to channel: {e}")
             return None
 
     def _create_thread(self, message_id: str, thread_name: str) -> str | None:
-        """Create a thread on a message using the bot token."""
-        channel_id = self._get_channel_id()
-        if not channel_id or not BOT_TOKEN:
+        if not BOT_TOKEN:
+            log.error("BOT_TOKEN (DISCORD_BOT_AUTH) is empty — cannot create threads")
             return None
+
+        channel_id = self._get_channel_id()
+        if not channel_id:
+            log.error("No channel_id — cannot create thread")
+            return None
+
+        log.info(f"Creating thread '{thread_name}' on msg {message_id} in channel {channel_id}")
         try:
             r = requests.post(
                 f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads",
                 headers=self._bot_headers(),
                 json={
                     "name": thread_name[:100],
-                    "auto_archive_duration": 1440,  # archive after 1 day of inactivity
+                    "auto_archive_duration": 1440,
                 },
                 timeout=5
             )
+            log.info(f"Thread creation response: {r.status_code} {r.text[:200]}")
             r.raise_for_status()
             thread_id = str(r.json().get("id", ""))
-            log.info(f"Created thread '{thread_name}' id={thread_id}")
+            log.info(f"✅ Created thread '{thread_name}' id={thread_id}")
             return thread_id
         except Exception as e:
-            log.warning(f"Thread creation failed: {e}")
+            log.error(f"Thread creation failed: {e}")
             return None
 
     def _post_to_thread(self, thread_id: str, embed: dict) -> bool:
-        """Post embed into an existing thread via webhook thread_id param."""
         try:
             r = requests.post(
                 DISCORD_WEBHOOK_URL,
@@ -96,8 +112,10 @@ class Alerter:
                 timeout=5
             )
             if r.status_code == 404:
+                log.warning(f"Thread {thread_id} not found (404)")
                 return False
             r.raise_for_status()
+            log.info(f"Posted to thread {thread_id}")
             return True
         except Exception as e:
             log.warning(f"Failed to post to thread {thread_id}: {e}")
@@ -112,10 +130,11 @@ class Alerter:
         market_key = _market_key(trade["market_title"])
         thread_id = self.active_threads.get(market_key)
 
+        log.info(f"Sending alert for '{market_key}' (thread_id={thread_id})")
+
         if thread_id:
             success = self._post_to_thread(thread_id, embed)
             if not success:
-                # Thread gone, remove and recreate below
                 del self.active_threads[market_key]
                 thread_id = None
 
@@ -125,6 +144,7 @@ class Alerter:
                 new_thread_id = self._create_thread(msg_id, f"🐋 {market_key}")
                 if new_thread_id:
                     self.active_threads[market_key] = new_thread_id
+                    log.info(f"Stored thread for '{market_key}'")
 
     def _build_embed(self, trade: dict, s: Score) -> dict:
         usd    = trade["usd"]
@@ -183,7 +203,7 @@ class Alerter:
                            f"[Wallet](https://polymarket.com/profile/{wallet})"),
                  "inline": False},
             ],
-            "footer": {"text": "Polymarket Whale Alert"},
+            "footer": {"text": f"Polymarket Whale Alert  •  Trade placed: {_format_est(trade.get('timestamp', 0))}"},
         }
 
     def _console(self, trade: dict, s: Score):
