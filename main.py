@@ -1,8 +1,11 @@
+import json
 import time
 import logging
+import os
 from collections import defaultdict
 from datetime import datetime, timezone
-from api import get_leaderboard, batch_get_activity, get_wallet_profile, get_market_by_condition
+from api import (get_leaderboard, batch_get_activity, get_wallet_profile,
+                 get_market_by_condition, get_market_by_event_slug)
 from scorer import score
 from alerts import Alerter
 from config import MIN_TRADE_USD, POLL_INTERVAL, TOP_WALLETS_COUNT
@@ -17,30 +20,50 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-WALLET_REFRESH  = 6 * 3600
-BATCH_SIZE      = 30
-CONSENSUS_WINDOW = 3600  # 1 hour in seconds
+WALLET_REFRESH   = 6 * 3600
+BATCH_SIZE       = 30
+CONSENSUS_WINDOW = 3600
+THREADS_FILE     = "active_threads.json"
+
+
+def load_threads() -> dict:
+    """Load persisted thread IDs from disk."""
+    try:
+        if os.path.exists(THREADS_FILE):
+            with open(THREADS_FILE) as f:
+                return json.load(f)
+    except Exception as e:
+        log.warning(f"Could not load threads file: {e}")
+    return {}
+
+
+def save_threads(threads: dict):
+    """Persist thread IDs to disk so they survive restarts."""
+    try:
+        with open(THREADS_FILE, "w") as f:
+            json.dump(threads, f)
+    except Exception as e:
+        log.warning(f"Could not save threads file: {e}")
 
 
 def parse(raw: dict, wallet: str, profile: dict) -> dict | None:
     try:
-        usd    = float(raw.get("usdcSize") or 0)
-        price  = float(raw.get("price") or 0)
+        usd   = float(raw.get("usdcSize") or 0)
+        price = float(raw.get("price") or 0)
         if usd <= 0 and price > 0:
             usd = float(raw.get("size", 0)) * price
         if usd < 1:
             return None
 
         raw_outcome = raw.get("outcome", raw.get("side", "?"))
-        # Keep original outcome label — player/team names are intentional on sports markets
         outcome = str(raw_outcome).upper() if raw_outcome else "?"
 
-        condition = raw.get("conditionId", "")
-        title     = raw.get("title", "")
-        slug      = raw.get("slug") or raw.get("eventSlug") or ""
-        tx        = raw.get("transactionHash", "")
-        ts        = int(raw.get("timestamp", 0))
-        tid       = tx or f"{wallet}-{ts}-{usd}"
+        condition  = raw.get("conditionId", "")
+        event_slug = raw.get("eventSlug") or raw.get("slug") or ""
+        title      = raw.get("title", "")
+        tx         = raw.get("transactionHash", "")
+        ts         = int(raw.get("timestamp", 0))
+        tid        = tx or f"{wallet}-{ts}-{usd}"
 
         return {
             "id":           tid,
@@ -49,9 +72,10 @@ def parse(raw: dict, wallet: str, profile: dict) -> dict | None:
             "price_cents":  price * 100,
             "outcome":      outcome,
             "condition":    condition,
+            "event_slug":   event_slug,
             "timestamp":    ts,
             "market_title": title or condition[:30] + "...",
-            "market_url":   f"https://polymarket.com/event/{slug}" if slug else "https://polymarket.com",
+            "market_url":   f"https://polymarket.com/event/{event_slug}" if event_slug else "https://polymarket.com",
             "pnl":          float(profile.get("pnl", 0) or 0),
             "win_rate":     0.0,
             "n_trades":     0,
@@ -66,22 +90,23 @@ def run():
     log.info(f"Threshold: ${MIN_TRADE_USD:,.0f} | Top {TOP_WALLETS_COUNT} wallets")
 
     alerter       = Alerter()
+    # Load persisted threads so we don't create duplicates after restarts
+    alerter.active_threads = load_threads()
+    log.info(f"Loaded {len(alerter.active_threads)} existing threads from disk")
+
     seen          = set()
     profile_cache = {}
-    market_cache  = {}
+    market_cache  = {}  # event_slug -> market info
     wallets       = []
     wallet_idx    = 0
     last_refresh  = 0
     last_ts       = int(datetime.now(timezone.utc).timestamp()) - 60
-
-    # Whale consensus tracker: condition -> list of (timestamp, side, wallet)
     consensus_log: dict[str, list] = defaultdict(list)
 
     while True:
         try:
             now = int(datetime.now(timezone.utc).timestamp())
 
-            # Refresh leaderboard every 6 hours
             if now - last_refresh > WALLET_REFRESH or not wallets:
                 log.info("Refreshing leaderboard...")
                 board = get_leaderboard(limit=TOP_WALLETS_COUNT)
@@ -90,9 +115,7 @@ def run():
                     addr = (e.get("proxyWallet") or e.get("address", "")).lower()
                     if addr:
                         wallets.append(addr)
-                        profile_cache[addr] = {
-                            "pnl": float(e.get("pnl", 0) or 0),
-                        }
+                        profile_cache[addr] = {"pnl": float(e.get("pnl", 0) or 0)}
                 last_refresh = now
                 log.info(f"Monitoring {len(wallets)} wallets")
 
@@ -100,7 +123,6 @@ def run():
                 time.sleep(60)
                 continue
 
-            # Check a batch in parallel
             batch = wallets[wallet_idx: wallet_idx + BATCH_SIZE]
             wallet_idx = (wallet_idx + BATCH_SIZE) % len(wallets)
 
@@ -128,116 +150,96 @@ def run():
                     new_whales.append(trade)
 
             for trade in new_whales:
-                # Activity API already gives us title and slug — use those first
-                # Only call Gamma if title is missing
-                cid = trade["condition"]
-                info = {}
+                # Use eventSlug for market lookup — gives event-level volume
+                event_slug = trade["event_slug"]
+                cache_key  = event_slug or trade["condition"]
 
-                if not trade["market_title"] or trade["market_title"].endswith("..."):
-                    if cid and cid not in market_cache:
-                        fetched = get_market_by_condition(cid) or {}
-                        if fetched.get("question") or fetched.get("title"):
-                            market_cache[cid] = fetched
-                            info = fetched
-                    else:
-                        info = market_cache.get(cid, {})
-
-                    title = info.get("question") or info.get("title") or ""
-                    if title:
-                        trade["market_title"] = title
-                    slug = info.get("market_slug") or info.get("slug") or ""
-                    if slug:
-                        trade["market_url"] = f"https://polymarket.com/event/{slug}"
+                if cache_key and cache_key not in market_cache:
+                    info = {}
+                    if event_slug:
+                        info = get_market_by_event_slug(event_slug) or {}
+                    if not info and trade["condition"]:
+                        info = get_market_by_condition(trade["condition"]) or {}
+                    if info:
+                        market_cache[cache_key] = info
                 else:
-                    # We already have a good title from activity API, just get volume/price
-                    if cid and cid not in market_cache:
-                        fetched = get_market_by_condition(cid) or {}
-                        if fetched.get("question") or fetched.get("title"):
-                            market_cache[cid] = fetched
-                        info = fetched
-                    else:
-                        info = market_cache.get(cid, {})
+                    info = market_cache.get(cache_key, {})
 
-                # Get 24hr volume from market info — try all known field names
+                # Only update title if we got a better one from Gamma
+                gamma_title = info.get("question") or info.get("title") or ""
+                if gamma_title and len(gamma_title) > len(trade["market_title"]):
+                    trade["market_title"] = gamma_title
+
+                # Volume — event-level is most accurate
                 volume_24h = 0.0
                 try:
                     volume_24h = float(
                         info.get("volume24hr") or
                         info.get("volume_24hr") or
-                        info.get("volumeNum") or
-                        info.get("volume") or
-                        0
+                        info.get("volumeNum") or 0
                     )
                 except Exception:
                     pass
-                if volume_24h == 0:
-                    log.debug(f"No volume for {cid}: info keys={list(info.keys())[:10]}")
 
-                # Get current price for price movement signal
+                # Current price for movement signal
                 price_after = 0.0
                 try:
                     outcome_prices = info.get("outcomePrices")
                     if outcome_prices:
-                        import json
                         prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
-                        if trade["outcome"] == "YES" and len(prices) > 0:
-                            price_after = float(prices[0]) * 100
-                        elif trade["outcome"] == "NO" and len(prices) > 1:
-                            price_after = float(prices[1]) * 100
+                        outcome_up = trade["outcome"].upper()
+                        if outcome_up in ("YES", "NO"):
+                            idx = 0 if outcome_up == "YES" else 1
+                            if len(prices) > idx:
+                                price_after = float(prices[idx]) * 100
                 except Exception:
                     pass
 
-                # Whale consensus — count same side on same market in last hour
+                # Consensus
+                cid = trade["condition"]
                 cutoff = now - CONSENSUS_WINDOW
                 consensus_log[cid] = [
                     (t, s, w) for t, s, w in consensus_log[cid]
                     if t > cutoff and w != trade["wallet"]
                 ]
-                same_side = sum(
-                    1 for t, s, w in consensus_log[cid]
-                    if s == trade["outcome"]
-                )
-                # Log this whale
+                same_side = sum(1 for t, s, w in consensus_log[cid] if s == trade["outcome"])
                 consensus_log[cid].append((now, trade["outcome"], trade["wallet"]))
 
                 s = score(
-                    usd              = trade["usd"],
-                    price_cents      = trade["price_cents"],
-                    pnl              = trade["pnl"],
-                    volume_24h       = volume_24h,
+                    usd               = trade["usd"],
+                    price_cents       = trade["price_cents"],
+                    pnl               = trade["pnl"],
+                    volume_24h        = volume_24h,
                     price_after_cents = price_after,
-                    side             = trade["outcome"],
-                    same_side_whales = same_side,
+                    side              = trade["outcome"],
+                    same_side_whales  = same_side,
                 )
 
-                # Add extra context for alert display
-                trade["volume_24h"]   = volume_24h
-                trade["price_after"]  = price_after
+                trade["volume_24h"]       = volume_24h
+                trade["price_after"]      = price_after
                 trade["same_side_whales"] = same_side
 
                 alerter.send(trade, s)
+
+                # Persist threads after every alert
+                save_threads(alerter.active_threads)
 
             if wallet_idx < BATCH_SIZE:
                 last_ts = now - 60
 
             if not new_whales:
-                batch_num = max(1, wallet_idx // BATCH_SIZE)
+                batch_num     = max(1, wallet_idx // BATCH_SIZE)
                 total_batches = max(1, len(wallets) // BATCH_SIZE)
                 log.info(f"No whale trades (batch {batch_num}/{total_batches})")
 
-            # Cleanup
             if len(seen) > 20_000:
                 seen = set(list(seen)[-5000:])
             if len(profile_cache) > 1000:
                 profile_cache.clear()
-            if len(market_cache) > 1000:
+            if len(market_cache) > 500:
                 market_cache.clear()
-            # Trim consensus log
             for cid in list(consensus_log.keys()):
-                consensus_log[cid] = [
-                    (t, s, w) for t, s, w in consensus_log[cid]
-                    if t > now - CONSENSUS_WINDOW
-                ]
+                consensus_log[cid] = [(t, s, w) for t, s, w in consensus_log[cid] if t > now - CONSENSUS_WINDOW]
 
         except Exception as e:
             log.error(f"Loop error: {e}", exc_info=True)
