@@ -2,7 +2,7 @@
 All Polymarket API calls in one place.
 Uses only public, no-auth endpoints:
   - data-api.polymarket.com  (profiles, leaderboard, activity)
-  - gamma-api.polymarket.com (market titles/slugs)
+  - gamma-api.polymarket.com (market titles/slugs/volume)
 """
 import logging
 import time
@@ -41,39 +41,24 @@ def _get(url: str, params: dict = {}, retries: int = 3):
 
 
 def get_leaderboard(limit: int = 300) -> list[dict]:
-    """
-    Returns top traders sorted by PnL.
-    Correct endpoint: data-api.polymarket.com/v1/leaderboard
-    Response is a direct list of {rank, proxyWallet, pnl, vol, ...}
-    """
     data = _get(f"{DATA}/v1/leaderboard", {"limit": limit})
-
     if data is None:
-        log.error("Leaderboard returned None — check endpoint")
+        log.error("Leaderboard returned None")
         return []
-
     if isinstance(data, list):
         log.info(f"Leaderboard: {len(data)} wallets loaded")
         return data
-
     if isinstance(data, dict):
         for key in ("leaderboard", "data", "results", "traders"):
             entries = data.get(key)
             if entries and isinstance(entries, list):
                 log.info(f"Leaderboard: {len(entries)} wallets loaded")
                 return entries
-
     log.error(f"Unexpected leaderboard response: {str(data)[:100]}")
     return []
 
 
 def get_wallet_activity(address: str, limit: int = 20) -> list[dict]:
-    """
-    Returns recent trades for a wallet from data-api /activity.
-    Fields: proxyWallet, side, size, price, usdcSize,
-            conditionId, title, slug, eventSlug, outcome,
-            transactionHash, timestamp
-    """
     data = _get(f"{DATA}/activity", {
         "user": address,
         "type": "TRADE",
@@ -85,7 +70,6 @@ def get_wallet_activity(address: str, limit: int = 20) -> list[dict]:
 
 
 def get_wallet_profile(address: str) -> dict:
-    """Returns pnl, win_rate, trades_count for a wallet."""
     data = _get(f"{DATA}/profile", {"user": address})
     if isinstance(data, list) and data:
         return data[0]
@@ -94,10 +78,22 @@ def get_wallet_profile(address: str) -> dict:
     return {}
 
 
+def get_market_by_slug(slug: str) -> dict:
+    """Fetch market info by slug — most reliable method."""
+    data = _get(f"{GAMMA}/markets", {"slug": slug})
+    if isinstance(data, list) and data:
+        return data[0]
+    if isinstance(data, dict) and data.get("markets"):
+        return data["markets"][0]
+    return {}
+
+
 def get_market_by_condition(condition_id: str) -> dict:
-    """Returns market question/title/slug/volume from Gamma API."""
-    # Try by conditionId first
-    for param in [{"id": condition_id}, {"condition_id": condition_id}, {"conditionIds": condition_id}]:
+    """Fetch market info by conditionId."""
+    for param in [
+        {"id": condition_id},
+        {"condition_id": condition_id},
+    ]:
         data = _get(f"{GAMMA}/markets", param)
         if isinstance(data, list) and data:
             return data[0]
@@ -106,8 +102,29 @@ def get_market_by_condition(condition_id: str) -> dict:
     return {}
 
 
+def get_market_by_event_slug(event_slug: str) -> dict:
+    """Fetch market info by eventSlug — often more reliable than conditionId."""
+    data = _get(f"{GAMMA}/events", {"slug": event_slug})
+    if isinstance(data, list) and data:
+        event = data[0]
+        markets = event.get("markets", [])
+        if markets:
+            # Return the event-level volume which is more accurate
+            result = markets[0].copy()
+            result["volume24hr"] = float(event.get("volume24hr") or event.get("volume") or 0)
+            result["question"] = event.get("title") or result.get("question", "")
+            return result
+    if isinstance(data, dict):
+        markets = data.get("markets", [])
+        if markets:
+            result = markets[0].copy()
+            result["volume24hr"] = float(data.get("volume24hr") or data.get("volume") or 0)
+            result["question"] = data.get("title") or result.get("question", "")
+            return result
+    return {}
+
+
 def batch_get_activity(wallets: list[str], limit: int = 10) -> dict[str, list]:
-    """Fetch activity for multiple wallets in parallel."""
     results = {}
     with ThreadPoolExecutor(max_workers=10) as ex:
         futures = {ex.submit(get_wallet_activity, w, limit): w for w in wallets}
