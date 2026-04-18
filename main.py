@@ -31,7 +31,10 @@ def parse(raw: dict, wallet: str, profile: dict) -> dict | None:
         if usd < 1:
             return None
 
-        outcome   = raw.get("outcome", raw.get("side", "?"))
+        raw_outcome = raw.get("outcome", raw.get("side", "?"))
+        # Keep original outcome label — player/team names are intentional on sports markets
+        outcome = str(raw_outcome).upper() if raw_outcome else "?"
+
         condition = raw.get("conditionId", "")
         title     = raw.get("title", "")
         slug      = raw.get("slug") or raw.get("eventSlug") or ""
@@ -44,7 +47,7 @@ def parse(raw: dict, wallet: str, profile: dict) -> dict | None:
             "wallet":       wallet.lower(),
             "usd":          usd,
             "price_cents":  price * 100,
-            "outcome":      str(outcome).upper() if outcome else "?",
+            "outcome":      outcome,
             "condition":    condition,
             "timestamp":    ts,
             "market_title": title or condition[:30] + "...",
@@ -128,8 +131,15 @@ def run():
                 # Enrich market info
                 cid = trade["condition"]
                 if cid and cid not in market_cache:
-                    market_cache[cid] = get_market_by_condition(cid) or {}
-                info = market_cache.get(cid, {})
+                    fetched = get_market_by_condition(cid) or {}
+                    # Only cache if we got a real title back
+                    if fetched.get("question") or fetched.get("title"):
+                        market_cache[cid] = fetched
+                    else:
+                        fetched = {}
+                    info = fetched
+                else:
+                    info = market_cache.get(cid, {})
 
                 title = info.get("question") or info.get("title") or ""
                 if title:
