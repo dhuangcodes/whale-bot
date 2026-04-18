@@ -72,7 +72,7 @@ def run():
     wallets       = []
     wallet_idx    = 0
     last_refresh  = 0
-    last_ts       = int(datetime.now(timezone.utc).timestamp()) - 300
+    last_ts       = int(datetime.now(timezone.utc).timestamp()) - 60
 
     # Whale consensus tracker: condition -> list of (timestamp, side, wallet)
     consensus_log: dict[str, list] = defaultdict(list)
@@ -128,25 +128,35 @@ def run():
                     new_whales.append(trade)
 
             for trade in new_whales:
-                # Enrich market info
+                # Activity API already gives us title and slug — use those first
+                # Only call Gamma if title is missing
                 cid = trade["condition"]
-                if cid and cid not in market_cache:
-                    fetched = get_market_by_condition(cid) or {}
-                    # Only cache if we got a real title back
-                    if fetched.get("question") or fetched.get("title"):
-                        market_cache[cid] = fetched
-                    else:
-                        fetched = {}
-                    info = fetched
-                else:
-                    info = market_cache.get(cid, {})
+                info = {}
 
-                title = info.get("question") or info.get("title") or ""
-                if title:
-                    trade["market_title"] = title
-                slug = info.get("market_slug") or info.get("slug") or ""
-                if slug:
-                    trade["market_url"] = f"https://polymarket.com/event/{slug}"
+                if not trade["market_title"] or trade["market_title"].endswith("..."):
+                    if cid and cid not in market_cache:
+                        fetched = get_market_by_condition(cid) or {}
+                        if fetched.get("question") or fetched.get("title"):
+                            market_cache[cid] = fetched
+                            info = fetched
+                    else:
+                        info = market_cache.get(cid, {})
+
+                    title = info.get("question") or info.get("title") or ""
+                    if title:
+                        trade["market_title"] = title
+                    slug = info.get("market_slug") or info.get("slug") or ""
+                    if slug:
+                        trade["market_url"] = f"https://polymarket.com/event/{slug}"
+                else:
+                    # We already have a good title from activity API, just get volume/price
+                    if cid and cid not in market_cache:
+                        fetched = get_market_by_condition(cid) or {}
+                        if fetched.get("question") or fetched.get("title"):
+                            market_cache[cid] = fetched
+                        info = fetched
+                    else:
+                        info = market_cache.get(cid, {})
 
                 # Get 24hr volume from market info — try all known field names
                 volume_24h = 0.0
