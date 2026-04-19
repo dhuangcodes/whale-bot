@@ -1,16 +1,21 @@
 """
 Whale trade confidence scorer (0-100).
 
-3 factors:
-  1. Wallet credibility (all-time PnL)        — 40 pts
-  2. Bet size relative to market 24hr volume  — 35 pts
-  3. Price conviction zone                     — 25 pts
+Factors:
+  1. Wallet credibility (all-time PnL)  — 50 pts  (most important)
+  2. Whale consensus (same side)        — 30 pts
+  3. Price conviction zone              — 20 pts
+
+Bonus/penalty (capped at 100):
+  +8  market confirmed after trade
+  +4  market moving their way
+  -5  market moved against them
 
 Score bands:
-  80-100  🔥 STRONG SIGNAL
-  60-79   ⚡ DECENT SIGNAL
-  40-59   👀 MILD SIGNAL
-  <40     📊 INFORMATIONAL
+  80+   🔥 STRONG SIGNAL
+  60-79 ⚡ DECENT SIGNAL
+  40-59 👀 MILD SIGNAL
+  <40   📊 INFORMATIONAL
 """
 from dataclasses import dataclass
 
@@ -19,7 +24,7 @@ from dataclasses import dataclass
 class Score:
     total: int
     credibility: int
-    dominance: int
+    dominance: int   # kept for compatibility, unused
     conviction: int
     price_move: int
     consensus: int
@@ -38,93 +43,66 @@ def score(
     same_side_whales: int,
 ) -> Score:
 
-    # --- 1. Wallet Credibility (40 pts) ---
-    if pnl >= 500_000:   cred = 40
-    elif pnl >= 200_000: cred = 34
-    elif pnl >= 100_000: cred = 27
-    elif pnl >= 50_000:  cred = 20
-    elif pnl >= 10_000:  cred = 12
-    elif pnl >= 0:       cred = 5
+    # --- 1. Wallet Credibility (50 pts) ---
+    if pnl >= 500_000:   cred = 50
+    elif pnl >= 200_000: cred = 42
+    elif pnl >= 100_000: cred = 34
+    elif pnl >= 50_000:  cred = 25
+    elif pnl >= 10_000:  cred = 15
+    elif pnl >= 0:       cred = 6
     else:                cred = 0
 
-    # --- 2. Bet Size vs Market Volume (35 pts) ---
-    if volume_24h > 0:
-        pct = (usd / volume_24h) * 100
-    else:
-        pct = 0
+    # --- 2. Whale Consensus (30 pts) ---
+    if same_side_whales >= 4:   cons = 30
+    elif same_side_whales >= 3: cons = 22
+    elif same_side_whales >= 2: cons = 14
+    elif same_side_whales == 1: cons = 7
+    else:                       cons = 0
 
-    if pct >= 20:    dom = 35
-    elif pct >= 10:  dom = 28
-    elif pct >= 5:   dom = 20
-    elif pct >= 2:   dom = 12
-    elif pct >= 0.5: dom = 6
-    elif pct > 0:    dom = 2
-    else:            dom = 4  # volume unknown, neutral
-
-    # --- 3. Price Conviction (25 pts) ---
-    # For sports markets (40-60¢ range) we still reward extreme prices
-    # but don't heavily punish normal NBA-range prices
+    # --- 3. Price Conviction (20 pts) ---
     p = price_cents
-    if   p <= 10 or p >= 90: conv = 25
-    elif p <= 20 or p >= 80: conv = 20
-    elif p <= 30 or p >= 70: conv = 14
-    elif p <= 40 or p >= 60: conv = 8
-    else:                    conv = 4  # near 50/50 — low but not zero
+    if   p <= 15 or p >= 85: conv = 20
+    elif p <= 25 or p >= 75: conv = 16
+    elif p <= 35 or p >= 65: conv = 11
+    elif p <= 45 or p >= 55: conv = 6
+    else:                    conv = 3  # dead 50/50
 
-    # Bonus factors (don't change total max but boost signal quality)
-    # Price movement confirmation
+    # --- Market confirmation bonus ---
     pm = 0
     if price_after_cents > 0 and price_cents > 0:
-        if side.upper() in ("YES",):
-            movement = price_after_cents - price_cents
-        else:
-            movement = price_cents - price_after_cents
+        movement = (price_after_cents - price_cents) if "YES" in side.upper() else (price_cents - price_after_cents)
         if movement >= 3:    pm = 8
         elif movement >= 1:  pm = 4
-        elif movement < -1:  pm = -4  # moved against
+        elif movement < -1:  pm = -5
 
-    # Whale consensus bonus
-    cons = 0
-    if same_side_whales >= 4:   cons = 10
-    elif same_side_whales >= 3: cons = 7
-    elif same_side_whales >= 2: cons = 4
-    elif same_side_whales == 1: cons = 2
+    total = min(100, max(0, cred + cons + conv + pm))
 
-    # Cap total at 100
-    total = min(100, cred + dom + conv + pm + cons)
-
-    # Label
     if total >= 80:   label, emoji = "STRONG SIGNAL", "🔥"
     elif total >= 60: label, emoji = "DECENT SIGNAL", "⚡"
     elif total >= 40: label, emoji = "MILD SIGNAL",   "👀"
     else:             label, emoji = "INFORMATIONAL", "📊"
 
-    # Reasoning
     parts = []
-    if cred >= 34:   parts.append(f"elite wallet (+${pnl:,.0f})")
-    elif cred >= 27: parts.append(f"strong wallet (+${pnl:,.0f})")
-    elif cred >= 20: parts.append(f"profitable wallet (+${pnl:,.0f})")
-    elif cred >= 12: parts.append(f"emerging wallet (+${pnl:,.0f})")
+    if cred >= 42:   parts.append(f"elite wallet (+${pnl:,.0f})")
+    elif cred >= 34: parts.append(f"strong wallet (+${pnl:,.0f})")
+    elif cred >= 25: parts.append(f"profitable wallet (+${pnl:,.0f})")
+    elif cred >= 15: parts.append(f"emerging wallet (+${pnl:,.0f})")
     elif cred == 0 and pnl < 0: parts.append(f"losing wallet (${pnl:,.0f})")
     else:            parts.append("limited track record")
 
-    if pct >= 10:    parts.append(f"dominates volume ({pct:.1f}% of 24h)")
-    elif pct >= 5:   parts.append(f"significant volume ({pct:.1f}% of 24h)")
-    elif pct >= 2:   parts.append(f"notable volume ({pct:.1f}% of 24h)")
+    if cons >= 22:   parts.append(f"{same_side_whales + 1} whales agree 🐋")
+    elif cons >= 14: parts.append(f"{same_side_whales} other whales agree")
+    elif cons >= 7:  parts.append("1 other whale agrees")
 
-    if conv >= 20:   parts.append(f"extreme conviction ({price_cents:.0f}¢)")
-    elif conv >= 14: parts.append(f"high conviction ({price_cents:.0f}¢)")
-    elif conv <= 4:  parts.append(f"near 50/50 ({price_cents:.0f}¢)")
+    if conv >= 16:   parts.append(f"high conviction ({price_cents:.0f}¢)")
+    elif conv <= 3:  parts.append(f"dead 50/50 ({price_cents:.0f}¢)")
 
     if pm >= 8:      parts.append("market confirmed ✓✓")
     elif pm >= 4:    parts.append("market moving with them ✓")
-    elif pm < 0:     parts.append("market moved against ✗")
-
-    if cons >= 7:    parts.append(f"{same_side_whales + 1} whales agree")
-    elif cons >= 4:  parts.append(f"{same_side_whales} other whale{'s' if same_side_whales > 1 else ''} agree")
+    elif pm == -5:   parts.append("market moved against ✗")
 
     return Score(
-        total, cred, dom, conv, pm, cons,
+        total, cred, 0, conv, pm, cons,
         label, emoji,
         ", ".join(parts) or "no standout factors"
     )
