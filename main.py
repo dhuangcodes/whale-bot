@@ -2,6 +2,7 @@ import json
 import time
 import logging
 import os
+import threading
 from collections import defaultdict
 from datetime import datetime, timezone
 from api import (get_leaderboard, batch_get_activity, get_wallet_profile,
@@ -9,6 +10,7 @@ from api import (get_leaderboard, batch_get_activity, get_wallet_profile,
 from scorer import score
 from alerts import Alerter
 from config import MIN_TRADE_USD, POLL_INTERVAL, TOP_WALLETS_COUNT
+from kalshi_monitor import KalshiMonitor
 
 logging.basicConfig(
     level=logging.INFO,
@@ -99,6 +101,20 @@ def run():
     last_refresh  = 0
     last_ts       = int(datetime.now(timezone.utc).timestamp()) - 60
     consensus_log: dict[str, list] = defaultdict(list)
+
+    # Start Kalshi monitor in background thread
+    kalshi = KalshiMonitor()
+    def kalshi_loop():
+        log.info("🏀 Kalshi NBA Monitor Starting")
+        while True:
+            try:
+                kalshi.poll()
+            except Exception as e:
+                log.error(f"Kalshi loop error: {e}")
+            time.sleep(60)  # poll every 60s
+
+    t = threading.Thread(target=kalshi_loop, daemon=True)
+    t.start()
 
     while True:
         try:
