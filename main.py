@@ -8,7 +8,7 @@ from api import (get_leaderboard, batch_get_activity,
                  get_market_by_condition, get_market_by_event_slug)
 from scorer import score
 from alerts import Alerter
-from config import MIN_TRADE_USD, POLL_INTERVAL, TOP_WALLETS_COUNT, WEBHOOK_NBA
+from config import MIN_TRADE_USD, POLL_INTERVAL, TOP_WALLETS_COUNT
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,7 +25,6 @@ BATCH_SIZE       = 30
 CONSENSUS_WINDOW = 3600
 
 # Use /tmp for persistence — survives Railway restarts better than working dir
-THREADS_FILE = "/tmp/whale_threads.json"
 WALLETS_FILE = "/tmp/whale_wallets.json"
 
 
@@ -93,16 +92,10 @@ def run():
     log.info(f"Threshold: ${MIN_TRADE_USD:,.0f} | Top {TOP_WALLETS_COUNT} wallets")
 
     # Load persisted state
-    active_threads = load_json(THREADS_FILE, {})
     known_wallets  = load_json(WALLETS_FILE, {})  # addr -> pnl
-    log.info(f"Loaded {len(active_threads)} threads, {len(known_wallets)} tracked wallets")
+    log.info(f"Loaded {len(known_wallets)} tracked wallets")
 
-    alerter        = Alerter(active_threads)
-
-    # Load existing Discord threads on startup to avoid duplicates after restart
-    if WEBHOOK_NBA:
-        alerter.load_existing_threads(WEBHOOK_NBA)
-
+    alerter        = Alerter()
     seen           = set()
     profile_cache  = {}
     market_cache   = {}
@@ -241,7 +234,7 @@ def run():
                 trade["price_after"]      = price_after
                 trade["same_side_whales"] = same_side
 
-                new_thread = alerter.send(trade, s)
+                alerter.send(trade, s)
 
                 # Auto-grow: save wallet to known list
                 wallet_addr = trade["wallet"]
@@ -250,9 +243,6 @@ def run():
                     log.info(f"Auto-tracked new wallet: {wallet_addr} (PnL: {trade['pnl']:,.0f})")
                     save_json(WALLETS_FILE, known_wallets)
 
-                # Save threads if a new one was created
-                if new_thread:
-                    save_json(THREADS_FILE, active_threads)
 
             if wallet_idx < BATCH_SIZE:
                 last_ts = now - 60
