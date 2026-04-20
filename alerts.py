@@ -15,24 +15,29 @@ COLORS = {
     "INFORMATIONAL": 0x888888,
 }
 
+# Strict NBA team names only — no generic sports words
 NBA_TEAMS = [
-    "hawks", "celtics", "nets", "hornets", "bulls", "cavaliers", "mavericks",
-    "nuggets", "pistons", "warriors", "rockets", "pacers", "clippers", "lakers",
-    "grizzlies", "heat", "bucks", "timberwolves", "pelicans", "knicks", "thunder",
-    "magic", "76ers", "suns", "trail blazers", "blazers", "kings", "spurs",
-    "raptors", "jazz", "wizards", "nba", "spread", "o/u"
+    "hawks", "celtics", "nets", "hornets", "bulls", "cavaliers", "cavs",
+    "mavericks", "mavs", "nuggets", "pistons", "warriors", "rockets",
+    "pacers", "clippers", "lakers", "grizzlies", "heat", "bucks",
+    "timberwolves", "wolves", "pelicans", "knicks", "thunder", "magic",
+    "76ers", "sixers", "suns", "trail blazers", "blazers", "kings",
+    "spurs", "raptors", "jazz", "wizards"
 ]
+
 MLB_TEAMS = [
     "yankees", "red sox", "dodgers", "giants", "cubs", "white sox", "reds",
     "guardians", "rockies", "tigers", "astros", "royals", "angels", "marlins",
     "brewers", "twins", "mets", "phillies", "pirates", "padres", "cardinals",
     "rays", "rangers", "blue jays", "nationals", "orioles", "athletics",
-    "mariners", "braves", "mlb"
+    "mariners", "braves"
 ]
+
 TENNIS_KEYWORDS = [
     "atp", "wta", "wimbledon", "roland garros", "us open", "australian open",
     "challenger", "wuning", "tennis", "grand slam"
 ]
+
 VIDEOGAME_KEYWORDS = [
     "cs2", "csgo", "valorant", "league of legends", "lol", "dota", "fortnite",
     "overwatch", "call of duty", "cod", "navi", "natus vincere", "faze",
@@ -60,8 +65,63 @@ def _is_nba(title: str) -> bool:
 
 
 def _market_key(title: str) -> str:
-    """Strip O/U lines so related markets group into same thread."""
-    return re.split(r'[:\|]', title)[0].strip() or title
+    """
+    Normalize market title to a canonical game key so that
+    'Hawks vs. Knicks', 'Spread: Knicks (-8.5)', 'Hawks vs. Knicks: O/U 221.5'
+    all map to the same thread 'Hawks vs. Knicks'.
+
+    Strategy:
+    1. Strip known prefixes like 'Spread:', 'Will ', 'O/U'
+    2. Find any two NBA team names in the title
+    3. Return them sorted alphabetically so order doesn't matter
+    """
+    t = title.lower()
+
+    # Find all NBA teams mentioned in the title
+    found = [team for team in NBA_TEAMS if team in t]
+
+    if len(found) >= 2:
+        # Deduplicate and sort so "Hawks vs Knicks" and "Knicks vs Hawks" match
+        unique = sorted(set(found))[:2]
+        # Capitalize nicely
+        name_map = {
+            "hawks": "Hawks", "celtics": "Celtics", "nets": "Nets",
+            "hornets": "Hornets", "bulls": "Bulls", "cavaliers": "Cavaliers",
+            "cavs": "Cavaliers", "mavericks": "Mavericks", "mavs": "Mavericks",
+            "nuggets": "Nuggets", "pistons": "Pistons", "warriors": "Warriors",
+            "rockets": "Rockets", "pacers": "Pacers", "clippers": "Clippers",
+            "lakers": "Lakers", "grizzlies": "Grizzlies", "heat": "Heat",
+            "bucks": "Bucks", "timberwolves": "Timberwolves", "wolves": "Timberwolves",
+            "pelicans": "Pelicans", "knicks": "Knicks", "thunder": "Thunder",
+            "magic": "Magic", "76ers": "76ers", "sixers": "76ers",
+            "suns": "Suns", "trail blazers": "Trail Blazers", "blazers": "Trail Blazers",
+            "kings": "Kings", "spurs": "Spurs", "raptors": "Raptors",
+            "jazz": "Jazz", "wizards": "Wizards",
+        }
+        team_names = [name_map.get(t, t.title()) for t in unique]
+        return f"{team_names[0]} vs. {team_names[1]}"
+
+    if len(found) == 1:
+        name_map = {
+            "hawks": "Hawks", "celtics": "Celtics", "nets": "Nets",
+            "hornets": "Hornets", "bulls": "Bulls", "cavaliers": "Cavaliers",
+            "cavs": "Cavaliers", "mavericks": "Mavericks", "mavs": "Mavericks",
+            "nuggets": "Nuggets", "pistons": "Pistons", "warriors": "Warriors",
+            "rockets": "Rockets", "pacers": "Pacers", "clippers": "Clippers",
+            "lakers": "Lakers", "grizzlies": "Grizzlies", "heat": "Heat",
+            "bucks": "Bucks", "timberwolves": "Timberwolves", "wolves": "Timberwolves",
+            "pelicans": "Pelicans", "knicks": "Knicks", "thunder": "Thunder",
+            "magic": "Magic", "76ers": "76ers", "sixers": "76ers",
+            "suns": "Suns", "trail blazers": "Trail Blazers", "blazers": "Trail Blazers",
+            "kings": "Kings", "spurs": "Spurs", "raptors": "Raptors",
+            "jazz": "Jazz", "wizards": "Wizards",
+        }
+        return name_map.get(found[0], found[0].title())
+
+    # Fallback: strip prefix and line info
+    stripped = re.sub(r'^(spread|o/u|will\s+the?\s+)', '', title, flags=re.IGNORECASE)
+    stripped = re.split(r'[:\|]', stripped)[0].strip()
+    return stripped or title
 
 
 def _bar(n: int) -> str:
@@ -94,9 +154,8 @@ def _route_name(title: str) -> str:
 
 class Alerter:
     def __init__(self, active_threads: dict):
-        # active_threads is passed in from main so it persists across calls
         self.active_threads = active_threads
-        self._channel_ids: dict[str, str] = {}  # webhook_url -> channel_id
+        self._channel_ids: dict[str, str] = {}
 
     def _get_channel_id(self, webhook_url: str) -> str | None:
         if webhook_url in self._channel_ids:
@@ -115,6 +174,37 @@ class Alerter:
     def _bot_headers(self) -> dict:
         return {"Authorization": f"Bot {DISCORD_BOT_AUTH}",
                 "Content-Type": "application/json"}
+
+    def load_existing_threads(self, webhook_url: str):
+        """
+        On startup, fetch active threads from Discord and rebuild
+        active_threads dict so we don't create duplicates after restarts.
+        """
+        if not DISCORD_BOT_AUTH:
+            return
+        channel_id = self._get_channel_id(webhook_url)
+        if not channel_id:
+            return
+        try:
+            r = requests.get(
+                f"https://discord.com/api/v10/channels/{channel_id}/threads/active",
+                headers=self._bot_headers(),
+                timeout=5
+            )
+            r.raise_for_status()
+            threads = r.json().get("threads", [])
+            loaded = 0
+            for thread in threads:
+                name = thread.get("name", "")
+                tid  = thread.get("id", "")
+                if name.startswith("🐋 ") and tid:
+                    key = name[2:].strip()  # strip "🐋 "
+                    if key not in self.active_threads:
+                        self.active_threads[key] = tid
+                        loaded += 1
+            log.info(f"Loaded {loaded} existing threads from Discord")
+        except Exception as e:
+            log.warning(f"Could not load existing threads: {e}")
 
     def _post_to_channel(self, webhook_url: str, embed: dict) -> str | None:
         try:
@@ -170,36 +260,36 @@ class Alerter:
             return False
 
     def send(self, trade: dict, s: Score) -> bool:
-        """Returns True if a new thread was created (so caller can save)."""
         webhook = _get_webhook(trade["market_title"])
         if not webhook:
             self._console(trade, s)
             return False
 
-        embed       = self._build_embed(trade, s)
-        use_threads = _is_nba(trade["market_title"])
-        new_thread  = False
+        embed      = self._build_embed(trade, s)
+        use_thread = _is_nba(trade["market_title"])
+        new_thread = False
 
-        if use_threads:
+        if use_thread:
             market_key = _market_key(trade["market_title"])
             thread_id  = self.active_threads.get(market_key)
 
             if thread_id:
                 success = self._post_to_thread(webhook, thread_id, embed)
                 if not success:
+                    log.warning(f"Thread {thread_id} gone, recreating")
                     del self.active_threads[market_key]
                     thread_id = None
 
             if not thread_id:
                 msg_id = self._post_to_channel(webhook, embed)
                 if msg_id:
-                    new_tid = self._create_thread(webhook, msg_id,
-                                                  f"🐋 {market_key}")
+                    new_tid = self._create_thread(
+                        webhook, msg_id, f"🐋 {market_key}"
+                    )
                     if new_tid:
                         self.active_threads[market_key] = new_tid
                         new_thread = True
         else:
-            # Non-NBA: just post directly, no threads
             try:
                 r = requests.post(webhook, json={"embeds": [embed]}, timeout=5)
                 r.raise_for_status()
@@ -223,7 +313,7 @@ class Alerter:
         pa = trade.get("price_after", 0)
         pc = trade["price_cents"]
         if pa > 0 and pc > 0:
-            diff = (pa - pc) if side in ("YES",) else (pc - pa)
+            diff = (pa - pc) if side == "YES" else (pc - pa)
             move_str = f"{'▲' if diff > 0 else '▼'} {abs(diff):.1f}¢ after trade"
         else:
             move_str = "price data unavailable"
