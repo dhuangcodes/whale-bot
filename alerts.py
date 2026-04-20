@@ -1,9 +1,8 @@
-import re
 import logging
 import requests
 from datetime import datetime, timezone, timedelta
 from config import (WEBHOOK_NBA, WEBHOOK_MLB, WEBHOOK_TENNIS,
-                    WEBHOOK_VIDEOGAMES, WEBHOOK_OTHER, DISCORD_BOT_AUTH)
+                    WEBHOOK_VIDEOGAMES, WEBHOOK_OTHER)
 from scorer import Score
 
 log = logging.getLogger(__name__)
@@ -15,7 +14,6 @@ COLORS = {
     "INFORMATIONAL": 0x888888,
 }
 
-# Strict NBA team names only — no generic sports words
 NBA_TEAMS = [
     "hawks", "celtics", "nets", "hornets", "bulls", "cavaliers", "cavs",
     "mavericks", "mavs", "nuggets", "pistons", "warriors", "rockets",
@@ -24,7 +22,6 @@ NBA_TEAMS = [
     "76ers", "sixers", "suns", "trail blazers", "blazers", "kings",
     "spurs", "raptors", "jazz", "wizards"
 ]
-
 MLB_TEAMS = [
     "yankees", "red sox", "dodgers", "giants", "cubs", "white sox", "reds",
     "guardians", "rockies", "tigers", "astros", "royals", "angels", "marlins",
@@ -32,12 +29,10 @@ MLB_TEAMS = [
     "rays", "rangers", "blue jays", "nationals", "orioles", "athletics",
     "mariners", "braves"
 ]
-
 TENNIS_KEYWORDS = [
     "atp", "wta", "wimbledon", "roland garros", "us open", "australian open",
     "challenger", "wuning", "tennis", "grand slam"
 ]
-
 VIDEOGAME_KEYWORDS = [
     "cs2", "csgo", "valorant", "league of legends", "lol", "dota", "fortnite",
     "overwatch", "call of duty", "cod", "navi", "natus vincere", "faze",
@@ -59,69 +54,17 @@ def _get_webhook(title: str) -> str:
     return WEBHOOK_OTHER
 
 
-def _is_nba(title: str) -> bool:
+def _route_name(title: str) -> str:
     t = title.lower()
-    return any(kw in t for kw in NBA_TEAMS)
-
-
-def _market_key(title: str) -> str:
-    """
-    Normalize market title to a canonical game key so that
-    'Hawks vs. Knicks', 'Spread: Knicks (-8.5)', 'Hawks vs. Knicks: O/U 221.5'
-    all map to the same thread 'Hawks vs. Knicks'.
-
-    Strategy:
-    1. Strip known prefixes like 'Spread:', 'Will ', 'O/U'
-    2. Find any two NBA team names in the title
-    3. Return them sorted alphabetically so order doesn't matter
-    """
-    t = title.lower()
-
-    # Find all NBA teams mentioned in the title
-    found = [team for team in NBA_TEAMS if team in t]
-
-    if len(found) >= 2:
-        # Deduplicate and sort so "Hawks vs Knicks" and "Knicks vs Hawks" match
-        unique = sorted(set(found))[:2]
-        # Capitalize nicely
-        name_map = {
-            "hawks": "Hawks", "celtics": "Celtics", "nets": "Nets",
-            "hornets": "Hornets", "bulls": "Bulls", "cavaliers": "Cavaliers",
-            "cavs": "Cavaliers", "mavericks": "Mavericks", "mavs": "Mavericks",
-            "nuggets": "Nuggets", "pistons": "Pistons", "warriors": "Warriors",
-            "rockets": "Rockets", "pacers": "Pacers", "clippers": "Clippers",
-            "lakers": "Lakers", "grizzlies": "Grizzlies", "heat": "Heat",
-            "bucks": "Bucks", "timberwolves": "Timberwolves", "wolves": "Timberwolves",
-            "pelicans": "Pelicans", "knicks": "Knicks", "thunder": "Thunder",
-            "magic": "Magic", "76ers": "76ers", "sixers": "76ers",
-            "suns": "Suns", "trail blazers": "Trail Blazers", "blazers": "Trail Blazers",
-            "kings": "Kings", "spurs": "Spurs", "raptors": "Raptors",
-            "jazz": "Jazz", "wizards": "Wizards",
-        }
-        team_names = [name_map.get(t, t.title()) for t in unique]
-        return f"{team_names[0]} vs. {team_names[1]}"
-
-    if len(found) == 1:
-        name_map = {
-            "hawks": "Hawks", "celtics": "Celtics", "nets": "Nets",
-            "hornets": "Hornets", "bulls": "Bulls", "cavaliers": "Cavaliers",
-            "cavs": "Cavaliers", "mavericks": "Mavericks", "mavs": "Mavericks",
-            "nuggets": "Nuggets", "pistons": "Pistons", "warriors": "Warriors",
-            "rockets": "Rockets", "pacers": "Pacers", "clippers": "Clippers",
-            "lakers": "Lakers", "grizzlies": "Grizzlies", "heat": "Heat",
-            "bucks": "Bucks", "timberwolves": "Timberwolves", "wolves": "Timberwolves",
-            "pelicans": "Pelicans", "knicks": "Knicks", "thunder": "Thunder",
-            "magic": "Magic", "76ers": "76ers", "sixers": "76ers",
-            "suns": "Suns", "trail blazers": "Trail Blazers", "blazers": "Trail Blazers",
-            "kings": "Kings", "spurs": "Spurs", "raptors": "Raptors",
-            "jazz": "Jazz", "wizards": "Wizards",
-        }
-        return name_map.get(found[0], found[0].title())
-
-    # Fallback: strip prefix and line info
-    stripped = re.sub(r'^(spread|o/u|will\s+the?\s+)', '', title, flags=re.IGNORECASE)
-    stripped = re.split(r'[:\|]', stripped)[0].strip()
-    return stripped or title
+    for kw in NBA_TEAMS:
+        if kw in t: return "NBA"
+    for kw in MLB_TEAMS:
+        if kw in t: return "MLB"
+    for kw in VIDEOGAME_KEYWORDS:
+        if kw in t: return "GAMES"
+    for kw in TENNIS_KEYWORDS:
+        if kw in t: return "TENNIS"
+    return "OTHER"
 
 
 def _bar(n: int) -> str:
@@ -139,169 +82,28 @@ def _format_est(ts: int) -> str:
     dt = datetime.fromtimestamp(ts, tz=est)
     return dt.strftime("%b %d %I:%M %p EST")
 
-def _route_name(title: str) -> str:
-    t = title.lower()
-    for kw in NBA_TEAMS:
-        if kw in t: return "NBA"
-    for kw in MLB_TEAMS:
-        if kw in t: return "MLB"
-    for kw in VIDEOGAME_KEYWORDS:
-        if kw in t: return "GAMES"
-    for kw in TENNIS_KEYWORDS:
-        if kw in t: return "TENNIS"
-    return "OTHER"
-
 
 class Alerter:
-    def __init__(self, active_threads: dict):
-        self.active_threads = active_threads
-        self._channel_ids: dict[str, str] = {}
+    def __init__(self):
+        pass
 
-    def _get_channel_id(self, webhook_url: str) -> str | None:
-        if webhook_url in self._channel_ids:
-            return self._channel_ids[webhook_url]
-        try:
-            r = requests.get(webhook_url, timeout=5)
-            r.raise_for_status()
-            cid = str(r.json().get("channel_id", ""))
-            if cid:
-                self._channel_ids[webhook_url] = cid
-            return cid
-        except Exception as e:
-            log.warning(f"Could not fetch channel ID: {e}")
-            return None
-
-    def _bot_headers(self) -> dict:
-        return {"Authorization": f"Bot {DISCORD_BOT_AUTH}",
-                "Content-Type": "application/json"}
-
-    def load_existing_threads(self, webhook_url: str):
-        """
-        On startup, fetch active threads from Discord and rebuild
-        active_threads dict so we don't create duplicates after restarts.
-        """
-        if not DISCORD_BOT_AUTH:
-            return
-        channel_id = self._get_channel_id(webhook_url)
-        if not channel_id:
-            return
-        try:
-            r = requests.get(
-                f"https://discord.com/api/v10/channels/{channel_id}/threads/active",
-                headers=self._bot_headers(),
-                timeout=5
-            )
-            r.raise_for_status()
-            threads = r.json().get("threads", [])
-            loaded = 0
-            for thread in threads:
-                name = thread.get("name", "")
-                tid  = thread.get("id", "")
-                if name.startswith("🐋 ") and tid:
-                    key = name[2:].strip()  # strip "🐋 "
-                    if key not in self.active_threads:
-                        self.active_threads[key] = tid
-                        loaded += 1
-            log.info(f"Loaded {loaded} existing threads from Discord")
-        except Exception as e:
-            log.warning(f"Could not load existing threads: {e}")
-
-    def _post_to_channel(self, webhook_url: str, embed: dict) -> str | None:
-        try:
-            r = requests.post(
-                webhook_url,
-                json={"embeds": [embed]},
-                params={"wait": "true"},
-                timeout=5
-            )
-            r.raise_for_status()
-            return str(r.json().get("id", ""))
-        except Exception as e:
-            log.error(f"Failed to post to channel: {e}")
-            return None
-
-    def _create_thread(self, webhook_url: str, message_id: str,
-                       thread_name: str) -> str | None:
-        if not DISCORD_BOT_AUTH:
-            return None
-        channel_id = self._get_channel_id(webhook_url)
-        if not channel_id:
-            return None
-        try:
-            r = requests.post(
-                f"https://discord.com/api/v10/channels/{channel_id}/messages/{message_id}/threads",
-                headers=self._bot_headers(),
-                json={"name": thread_name[:100], "auto_archive_duration": 1440},
-                timeout=5
-            )
-            r.raise_for_status()
-            tid = str(r.json().get("id", ""))
-            log.info(f"Created thread '{thread_name}' id={tid}")
-            return tid
-        except Exception as e:
-            log.warning(f"Thread creation failed: {e}")
-            return None
-
-    def _post_to_thread(self, webhook_url: str, thread_id: str,
-                        embed: dict) -> bool:
-        try:
-            r = requests.post(
-                webhook_url,
-                json={"embeds": [embed]},
-                params={"thread_id": thread_id},
-                timeout=5
-            )
-            if r.status_code == 404:
-                return False
-            r.raise_for_status()
-            return True
-        except Exception as e:
-            log.warning(f"Failed to post to thread {thread_id}: {e}")
-            return False
-
-    def send(self, trade: dict, s: Score) -> bool:
+    def send(self, trade: dict, s: Score):
         webhook = _get_webhook(trade["market_title"])
         if not webhook:
             self._console(trade, s)
-            return False
+            return
 
-        embed      = self._build_embed(trade, s)
-        use_thread = _is_nba(trade["market_title"])
-        new_thread = False
-
-        if use_thread:
-            market_key = _market_key(trade["market_title"])
-            thread_id  = self.active_threads.get(market_key)
-
-            if thread_id:
-                success = self._post_to_thread(webhook, thread_id, embed)
-                if not success:
-                    log.warning(f"Thread {thread_id} gone, recreating")
-                    del self.active_threads[market_key]
-                    thread_id = None
-
-            if not thread_id:
-                msg_id = self._post_to_channel(webhook, embed)
-                if msg_id:
-                    new_tid = self._create_thread(
-                        webhook, msg_id, f"🐋 {market_key}"
-                    )
-                    if new_tid:
-                        self.active_threads[market_key] = new_tid
-                        new_thread = True
-        else:
-            try:
-                r = requests.post(webhook, json={"embeds": [embed]}, timeout=5)
-                r.raise_for_status()
-            except Exception as e:
-                log.error(f"Discord failed: {e}")
-                self._console(trade, s)
-
-        log.info(f"✅ [{_route_name(trade['market_title'])}] "
-                 f"${trade['usd']:,.0f} {trade['outcome']} "
-                 f"@ {trade['price_cents']:.1f}¢ [{s.total}/100] "
-                 f"— {trade['market_title'][:50]}")
-        return new_thread
+        embed = self._build_embed(trade, s)
+        try:
+            r = requests.post(webhook, json={"embeds": [embed]}, timeout=5)
+            r.raise_for_status()
+            log.info(f"✅ [{_route_name(trade['market_title'])}] "
+                     f"${trade['usd']:,.0f} {trade['outcome']} "
+                     f"@ {trade['price_cents']:.1f}¢ [{s.total}/100] "
+                     f"— {trade['market_title'][:50]}")
+        except Exception as e:
+            log.error(f"Discord failed: {e}")
+            self._console(trade, s)
 
     def _build_embed(self, trade: dict, s: Score) -> dict:
         usd    = trade["usd"]
