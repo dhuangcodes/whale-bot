@@ -159,13 +159,35 @@ class GameSummaryStore:
                 f"📊 Best score: {best_score}/100"
             )
 
-            # Show top 3 individual bets by USD
+                # Top 3 biggest bets by USD
             top_bets = sorted(side_alerts, key=lambda x: x["usd"], reverse=True)[:3]
+            lines.append("  💵 Biggest bets:")
             for b in top_bets:
                 lines.append(
                     f"    • ${b['usd']:,.0f} @ {b['price_cents']:.1f}¢ "
                     f"[{b['wallet'][:10]}… +${b['pnl']:,.0f} PnL] "
                     f"({b['score']}/100)"
+                )
+
+            # Top 3 elite wallets by PnL (deduplicated by wallet)
+            seen_wallets = set()
+            elite_bets = []
+            for b in sorted(side_alerts, key=lambda x: x["pnl"], reverse=True):
+                if b["wallet"] not in seen_wallets:
+                    seen_wallets.add(b["wallet"])
+                    elite_bets.append(b)
+                if len(elite_bets) == 3:
+                    break
+
+            lines.append("  🏆 Top wallets by PnL:")
+            for b in elite_bets:
+                total_from_wallet = sum(
+                    a["usd"] for a in side_alerts if a["wallet"] == b["wallet"]
+                )
+                lines.append(
+                    f"    • +${b['pnl']:,.0f} PnL wallet — "
+                    f"${total_from_wallet:,.0f} total on this side "
+                    f"@ avg {sum(a['price_cents'] for a in side_alerts if a['wallet'] == b['wallet']) / max(1, sum(1 for a in side_alerts if a['wallet'] == b['wallet'])):.1f}¢"
                 )
             lines.append("")
 
