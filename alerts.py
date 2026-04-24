@@ -41,8 +41,22 @@ VIDEOGAME_KEYWORDS = [
 ]
 
 
+NHL_TEAMS = [
+    "avalanche", "bruins", "sabres", "flames", "hurricanes", "blackhawks",
+    "blue jackets", "stars", "red wings", "oilers", "panthers",
+    "wild", "canadiens", "predators", "devils", "islanders",
+    "rangers", "senators", "flyers", "penguins", "sharks", "kraken",
+    "blues", "lightning", "maple leafs", "canucks", "golden knights",
+    "capitals", "jets", "coyotes", "ducks", "nhl", "stanley cup",
+    "puck", "power play", "hat trick"
+]
+
+
 def _get_webhook(title: str) -> str:
     t = title.lower()
+    # NHL check before NBA — kings/rangers/etc overlap
+    for kw in NHL_TEAMS:
+        if kw in t: return WEBHOOK_OTHER
     for kw in NBA_TEAMS:
         if kw in t: return WEBHOOK_NBA
     for kw in MLB_TEAMS:
@@ -56,6 +70,8 @@ def _get_webhook(title: str) -> str:
 
 def _route_name(title: str) -> str:
     t = title.lower()
+    for kw in NHL_TEAMS:
+        if kw in t: return "OTHER"
     for kw in NBA_TEAMS:
         if kw in t: return "NBA"
     for kw in MLB_TEAMS:
