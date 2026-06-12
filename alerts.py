@@ -1,8 +1,7 @@
 import logging
 import requests
 from datetime import datetime, timezone, timedelta
-from config import (WEBHOOK_NBA, WEBHOOK_MLB, WEBHOOK_TENNIS,
-                    WEBHOOK_VIDEOGAMES, WEBHOOK_OTHER)
+from config import WEBHOOK_NBA, WEBHOOK_WORLDCUP
 from scorer import Score
 
 log = logging.getLogger(__name__)
@@ -14,72 +13,75 @@ COLORS = {
     "INFORMATIONAL": 0x888888,
 }
 
+# ── Sport classifiers ────────────────────────────────────────────────────────
+
+NHL_TEAMS = [
+    "avalanche", "bruins", "sabres", "flames", "hurricanes", "blackhawks",
+    "blue jackets", "stars", "red wings", "oilers", "panthers", "wild",
+    "canadiens", "predators", "devils", "islanders", "rangers", "senators",
+    "flyers", "penguins", "sharks", "kraken", "blues", "lightning",
+    "maple leafs", "canucks", "golden knights", "capitals", "jets",
+    "coyotes", "ducks", "nhl", "stanley cup", "puck", "power play"
+]
+
 NBA_TEAMS = [
     "hawks", "celtics", "nets", "hornets", "bulls", "cavaliers", "cavs",
     "mavericks", "mavs", "nuggets", "pistons", "warriors", "rockets",
     "pacers", "clippers", "lakers", "grizzlies", "heat", "bucks",
     "timberwolves", "wolves", "pelicans", "knicks", "thunder", "magic",
     "76ers", "sixers", "suns", "trail blazers", "blazers", "kings",
-    "spurs", "raptors", "jazz", "wizards"
-]
-MLB_TEAMS = [
-    "yankees", "red sox", "dodgers", "giants", "cubs", "white sox", "reds",
-    "guardians", "rockies", "tigers", "astros", "royals", "angels", "marlins",
-    "brewers", "twins", "mets", "phillies", "pirates", "padres", "cardinals",
-    "rays", "rangers", "blue jays", "nationals", "orioles", "athletics",
-    "mariners", "braves"
-]
-TENNIS_KEYWORDS = [
-    "atp", "wta", "wimbledon", "roland garros", "us open", "australian open",
-    "challenger", "wuning", "tennis", "grand slam"
-]
-VIDEOGAME_KEYWORDS = [
-    "cs2", "csgo", "valorant", "league of legends", "lol", "dota", "fortnite",
-    "overwatch", "call of duty", "cod", "navi", "natus vincere", "faze",
-    "vitality", "astralis", "g2", "fnatic", "team liquid", "esport",
-    "blast", "pgl", "iem", "esl"
+    "spurs", "raptors", "jazz", "wizards", "nba finals", "nba playoffs",
+    "nba championship"
 ]
 
-
-NHL_TEAMS = [
-    "avalanche", "bruins", "sabres", "flames", "hurricanes", "blackhawks",
-    "blue jackets", "stars", "red wings", "oilers", "panthers",
-    "wild", "canadiens", "predators", "devils", "islanders",
-    "rangers", "senators", "flyers", "penguins", "sharks", "kraken",
-    "blues", "lightning", "maple leafs", "canucks", "golden knights",
-    "capitals", "jets", "coyotes", "ducks", "nhl", "stanley cup",
-    "puck", "power play", "hat trick"
+# World Cup 2026 — all 48 qualified nations + tournament keywords
+WORLDCUP_KEYWORDS = [
+    # Tournament keywords
+    "world cup", "fifa", "worldcup", "2026 world cup", "world cup 2026",
+    "group stage", "round of 32", "round of 16", "quarterfinal",
+    "semifinal", "semi-final", "wc 2026",
+    # Nations
+    "argentina", "brazil", "france", "england", "germany", "spain",
+    "portugal", "netherlands", "belgium", "italy", "croatia", "denmark",
+    "switzerland", "uruguay", "mexico", "usa", "united states", "canada",
+    "australia", "japan", "south korea", "morocco", "senegal", "nigeria",
+    "ghana", "cameroon", "ecuador", "colombia", "chile", "peru",
+    "venezuela", "paraguay", "bolivia", "saudi arabia", "iran", "qatar",
+    "south africa", "egypt", "algeria", "tunisia", "mali", "ivory coast",
+    "new zealand", "austria", "poland", "czech republic", "hungary",
+    "slovakia", "serbia", "ukraine", "turkey", "scotland", "wales",
+    "ireland", "norway", "sweden", "finland", "greece", "romania",
+    "panama", "costa rica", "honduras", "jamaica", "el salvador",
+    "cuba", "haiti", "new caledonia", "fiji", "indonesia", "iraq",
+    "uzbekistan", "bahrain", "jordan", "oman", "palestine",
+    "democratic republic of congo", "zimbabwe", "zambia", "tanzania",
+    "guinea", "angola", "cabo verde"
 ]
 
 
 def _get_webhook(title: str) -> str:
     t = title.lower()
-    # NHL check before NBA — kings/rangers/etc overlap
-    for kw in NHL_TEAMS:
-        if kw in t: return WEBHOOK_OTHER
-    for kw in NBA_TEAMS:
-        if kw in t: return WEBHOOK_NBA
-    for kw in MLB_TEAMS:
-        if kw in t: return WEBHOOK_MLB
-    for kw in VIDEOGAME_KEYWORDS:
-        if kw in t: return WEBHOOK_VIDEOGAMES
-    for kw in TENNIS_KEYWORDS:
-        if kw in t: return WEBHOOK_TENNIS
-    return WEBHOOK_OTHER
+    # NHL first — overlaps with kings/rangers in NBA
+    if any(kw in t for kw in NHL_TEAMS):
+        return WEBHOOK_WORLDCUP  # route NHL to worldcup channel as "other"
+    # NBA
+    if any(kw in t for kw in NBA_TEAMS):
+        return WEBHOOK_NBA
+    # World Cup
+    if any(kw in t for kw in WORLDCUP_KEYWORDS):
+        return WEBHOOK_WORLDCUP
+    # Everything else → worldcup channel
+    return WEBHOOK_WORLDCUP
 
 
 def _route_name(title: str) -> str:
     t = title.lower()
-    for kw in NHL_TEAMS:
-        if kw in t: return "OTHER"
-    for kw in NBA_TEAMS:
-        if kw in t: return "NBA"
-    for kw in MLB_TEAMS:
-        if kw in t: return "MLB"
-    for kw in VIDEOGAME_KEYWORDS:
-        if kw in t: return "GAMES"
-    for kw in TENNIS_KEYWORDS:
-        if kw in t: return "TENNIS"
+    if any(kw in t for kw in NHL_TEAMS):
+        return "NHL"
+    if any(kw in t for kw in NBA_TEAMS):
+        return "NBA"
+    if any(kw in t for kw in WORLDCUP_KEYWORDS):
+        return "WORLDCUP"
     return "OTHER"
 
 
@@ -127,6 +129,7 @@ class Alerter:
         wallet = trade["wallet"]
         pnl    = trade["pnl"]
         side_e = "🟢" if side not in ("NO", "UNDER") else "🔴"
+        route  = _route_name(trade["market_title"])
 
         pa = trade.get("price_after", 0)
         pc = trade["price_cents"]
@@ -139,8 +142,11 @@ class Alerter:
         sw       = trade.get("same_side_whales", 0)
         cons_str = f"{sw + 1} whales on this side" if sw > 0 else "first whale on this side"
 
+        # Label differs by sport
+        sport_label = "⚽ World Cup Whale" if route in ("WORLDCUP", "OTHER", "NHL") else "🏀 Polymarket Whale"
+
         return {
-            "title": f"{s.emoji} {s.label} — Polymarket Whale",
+            "title": f"{s.emoji} {s.label} — {sport_label}",
             "color": COLORS.get(s.label, 0x888888),
             "fields": [
                 {"name": "📌 Market",
