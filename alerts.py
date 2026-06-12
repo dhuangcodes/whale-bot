@@ -59,25 +59,38 @@ WORLDCUP_KEYWORDS = [
 ]
 
 
+# Things to completely ignore — don't post to any channel
+IGNORE_KEYWORDS = [
+    "bitcoin", "btc", "ethereum", "eth", "solana", "sol", "crypto",
+    "up or down", "price up", "price down", "binance", "coinbase",
+    "xai", "openai", "anthropic", "best ai", "ai model", "gpt",
+    "counter-strike", "cs2", "csgo", "valorant", "dota", "esport",
+    "iem", "blast", "pgl", "esl", "major stage",
+    "corners", "yellow card", "red card", "total goals", "both teams to score",
+    "first goalscorer", "anytime scorer", "half time",
+]
+
+
 def _get_webhook(title: str) -> str:
     t = title.lower()
-    # NHL first — overlaps with kings/rangers in NBA
+    # Hard ignore — crypto, AI, esports, prop bets
+    if any(kw in t for kw in IGNORE_KEYWORDS):
+        return ""
+    # NHL — ignore
     if any(kw in t for kw in NHL_TEAMS):
-        return WEBHOOK_WORLDCUP  # route NHL to worldcup channel as "other"
+        return ""
     # NBA
     if any(kw in t for kw in NBA_TEAMS):
         return WEBHOOK_NBA
     # World Cup
     if any(kw in t for kw in WORLDCUP_KEYWORDS):
         return WEBHOOK_WORLDCUP
-    # Everything else → worldcup channel
-    return WEBHOOK_WORLDCUP
+    # Everything else — ignore
+    return ""
 
 
 def _route_name(title: str) -> str:
     t = title.lower()
-    if any(kw in t for kw in NHL_TEAMS):
-        return "NHL"
     if any(kw in t for kw in NBA_TEAMS):
         return "NBA"
     if any(kw in t for kw in WORLDCUP_KEYWORDS):
