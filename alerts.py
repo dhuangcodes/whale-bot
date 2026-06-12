@@ -34,28 +34,32 @@ NBA_TEAMS = [
     "nba championship"
 ]
 
-# World Cup 2026 — all 48 qualified nations + tournament keywords
+# Exact 48 qualified teams for 2026 FIFA World Cup + tournament keywords
 WORLDCUP_KEYWORDS = [
     # Tournament keywords
-    "world cup", "fifa", "worldcup", "2026 world cup", "world cup 2026",
+    "world cup", "fifa", "2026 world cup", "world cup 2026",
     "group stage", "round of 32", "round of 16", "quarterfinal",
     "semifinal", "semi-final", "wc 2026",
-    # Nations
-    "argentina", "brazil", "france", "england", "germany", "spain",
-    "portugal", "netherlands", "belgium", "italy", "croatia", "denmark",
-    "switzerland", "uruguay", "mexico", "usa", "united states", "canada",
-    "australia", "japan", "south korea", "morocco", "senegal", "nigeria",
-    "ghana", "cameroon", "ecuador", "colombia", "chile", "peru",
-    "venezuela", "paraguay", "bolivia", "saudi arabia", "iran", "qatar",
-    "south africa", "egypt", "algeria", "tunisia", "mali", "ivory coast",
-    "new zealand", "austria", "poland", "czech republic", "hungary",
-    "slovakia", "serbia", "ukraine", "turkey", "scotland", "wales",
-    "ireland", "norway", "sweden", "finland", "greece", "romania",
-    "panama", "costa rica", "honduras", "jamaica", "el salvador",
-    "cuba", "haiti", "new caledonia", "fiji", "indonesia", "iraq",
-    "uzbekistan", "bahrain", "jordan", "oman", "palestine",
-    "democratic republic of congo", "zimbabwe", "zambia", "tanzania",
-    "guinea", "angola", "cabo verde"
+    # UEFA (16 teams)
+    "germany", "portugal", "spain", "france", "england", "netherlands",
+    "belgium", "austria", "croatia", "denmark", "switzerland", "turkey",
+    "scotland", "norway", "sweden", "bosnia and herzegovina", "bosnia",
+    # CONMEBOL (6 teams)
+    "argentina", "brazil", "colombia", "uruguay", "ecuador", "paraguay",
+    # CONCACAF (6 teams — includes 3 hosts)
+    "united states", "mexico", "canada", "panama", "honduras", "jamaica",
+    # AFC (8 teams)
+    "japan", "south korea", "iran", "saudi arabia", "australia",
+    "uzbekistan", "qatar", "iraq",
+    # CAF (9 teams)
+    "morocco", "senegal", "egypt", "nigeria", "south africa",
+    "cameroon", "mali", "ivory coast", "tanzania",
+    # OFC (1 team)
+    "new zealand",
+    # Intercontinental playoff winners
+    "indonesia", "venezuela",
+    # Czechia (playoff winner)
+    "czechia", "czech republic",
 ]
 
 
